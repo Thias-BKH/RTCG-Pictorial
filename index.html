@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDF Flipbook with Zoom</title>
+    
+    <!-- Dependencies via CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/page-flip@0.4.3/dist/js/page-flip.browser.js"></script>
+
+    <style>
+        body {
+            margin: 0;
+            padding: 15px;
+            background-color: #1e293b;
+            color: #ffffff;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            font-family: system-ui, -apple-system, sans-serif;
+            box-sizing: border-box;
+            overflow-x: hidden;
+        }
+
+        #status {
+            font-size: 1.1rem;
+            margin-bottom: 15px;
+        }
+
+        /* Responsive container to maximize screen usage */
+        .container {
+            width: 95vw;
+            height: 75vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        #book {
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            display: none; /* Shown after load */
+            cursor: zoom-in;
+        }
+
+        .controls {
+            margin-top: 15px;
+            display: flex;
+            gap: 12px;
+            align-items: center;
+        }
+
+        button {
+            padding: 10px 20px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            border: none;
+            border-radius: 6px;
+            background-color: #3b82f6;
+            color: white;
+            transition: background 0.2s;
+        }
+
+        button:hover { background-color: #2563eb; }
+        button:disabled { background-color: #475569; cursor: not-allowed; }
+        .zoom-btn { background-color: #10b981; }
+        .zoom-btn:hover { background-color: #059669; }
+
+        /* Fullscreen Lightbox Zoom Modal */
+        #zoom-modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: rgba(0, 0, 0, 0.9);
+            z-index: 9999;
+            justify-content: center;
+            align-items: center;
+            cursor: zoom-out;
+            overflow: auto;
+        }
+
+        #zoom-img {
+            max-width: 95%;
+            max-height: 95%;
+            object-fit: contain;
+            border-radius: 4px;
+            box-shadow: 0 0 20px rgba(0,0,0,0.8);
+            transition: transform 0.2s ease-in-out;
+        }
+
+        .modal-tip {
+            position: absolute;
+            top: 15px;
+            color: #ccc;
+            font-size: 0.9rem;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="status">Loading document.pdf...</div>
+
+    <div class="container">
+        <div id="book"></div>
+    </div>
+
+    <div class="controls">
+        <button id="prev-btn" disabled>◀ Prev</button>
+        <button id="zoom-btn" class="zoom-btn" disabled>🔍 Zoom Page</button>
+        <button id="next-btn" disabled>Next ▶</button>
+    </div>
+
+    <!-- Zoom Modal -->
+    <div id="zoom-modal">
+        <span class="modal-tip">Click anywhere or press Esc to exit zoom</span>
+        <img id="zoom-img" alt="Zoomed Page View">
+    </div>
+
+    <script>
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
+
+        const PDF_FILE = 'document.pdf';
+
+        document.addEventListener('DOMContentLoaded', async () => {
+            const statusEl = document.getElementById('status');
+            const bookEl = document.getElementById('book');
+            const prevBtn = document.getElementById('prev-btn');
+            const nextBtn = document.getElementById('next-btn');
+            const zoomBtn = document.getElementById('zoom-btn');
+            const zoomModal = document.getElementById('zoom-modal');
+            const zoomImg = document.getElementById('zoom-img');
+
+            try {
+                const pdf = await pdfjsLib.getDocument(PDF_FILE).promise;
+                const images = [];
+
+                // 1. Get aspect ratio of Page 1
+                const firstPage = await pdf.getPage(1);
+                const originalViewport = firstPage.getViewport({ scale: 1.0 });
+
+                // Calculate base dimensions scaled to fit reasonable page height
+                const targetHeight = 650;
+                const targetWidth = targetHeight * (originalViewport.width / originalViewport.height);
+
+                // 2. Render pages at 3x scale for ultra-crisp zoom quality
+                for (let i = 1; i <= pdf.numPages; i++) {
+                    statusEl.textContent = `Rendering page ${i} of ${pdf.numPages}...`;
+                    const page = await pdf.getPage(i);
+                    
+                    const viewport = page.getViewport({ scale: 3.0 });
+                    const canvas = document.createElement('canvas');
+                    const ctx = canvas.getContext('2d');
+                    canvas.width = viewport.width;
+                    canvas.height = viewport.height;
+
+                    await page.render({ canvasContext: ctx, viewport }).promise;
+                    images.push(canvas.toDataURL('image/jpeg', 0.92));
+                }
+
+                statusEl.style.display = 'none';
+                bookEl.style.display = 'block';
+
+                // 3. Initialize StPageFlip with stretch bounds fitting screen
+                const pageFlip = new St.PageFlip(bookEl, {
+                    width: targetWidth,
+                    height: targetHeight,
+                    size: "stretch",
+                    minWidth: 280,
+                    maxWidth: 1200,
+                    minHeight: 400,
+                    maxHeight: 1400,
+                    showCover: true
+                });
+
+                pageFlip.loadFromImages(images);
+
+                prevBtn.disabled = false;
+                nextBtn.disabled = false;
+                zoomBtn.disabled = false;
+
+                prevBtn.addEventListener('click', () => pageFlip.flipPrev());
+                nextBtn.addEventListener('click', () => pageFlip.flipNext());
+
+                // 4. Open current page in high-res zoom modal
+                const openZoom = () => {
+                    const currentPageIndex = pageFlip.getCurrentPageIndex();
+                    if (images[currentPageIndex]) {
+                        zoomImg.src = images[currentPageIndex];
+                        zoomModal.style.display = 'flex';
+                    }
+                };
+
+                zoomBtn.addEventListener('click', openZoom);
+                bookEl.addEventListener('dblclick', openZoom);
+
+                // Close zoom modal on click or ESC key
+                zoomModal.addEventListener('click', () => { zoomModal.style.display = 'none'; });
+                document.addEventListener('keydown', (e) => {
+                    if (e.key === 'Escape') zoomModal.style.display = 'none';
+                });
+
+            } catch (err) {
+                statusEl.textContent = 'Error: Make sure your file is named "document.pdf" in the main folder.';
+            }
+        });
+    </script>
+</body>
+</html>
